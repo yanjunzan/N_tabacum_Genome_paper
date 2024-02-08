@@ -1,0 +1,223 @@
+configfile: "./Tobacck1k_mapping_bwa2.yaml"
+
+###########################
+# define sample snakemake -npr --use-conda  snakemake -s Snakefile --jobs 2
+###########################
+
+
+WORKING_DIR = config["working_dir"]
+RESULT_DIR = config["result_dir"]
+
+
+REF_dir = config["refdir"]
+genome = config["ref"]
+
+
+SAMPLES = [ f.strip("\n") for f in open("/data/public/genotype/reseq/tobacco1k/SampleName_pass.txt").readlines() ]
+###########################
+# Input functions for rulesh
+
+###########################
+
+rule all:
+    input:
+        #vcf = WORKING_DIR + "vcf/all.vcf",
+        #reffai = REF_dir + genome + ".fasta.fai",
+        #bamlist= WORKING_DIR + "mapped/BAMList.txt",
+        outbam = expand(RESULT_DIR + "mapped/{sample}_sort_index_rg_nodup.bam",sample=SAMPLES),
+        outbai = expand(RESULT_DIR + "mapped/{sample}_sort_index_rg_nodup.bam.bai",sample=SAMPLES),
+        outgvcf = expand(RESULT_DIR + "gvcf/{sample}.gvcf.gz",sample=SAMPLES)
+        #samstats = expand(WORKING_DIR + "bamstats/{sample}.bamstats.stat",sample=SAMPLES),
+        #sort_index_rgbam = expand(RESULT_DIR + "mapped/{sample}_sort_index_rg.bam",sample=SAMPLES)
+        #sort_index_rgbam = expand(RESULT_DIR + "mapped/{sample}_sort_index.bam",sample=SAMPLES),
+
+        #genomeF = REF_dir + genome + ".bwt",
+        #qcfile = expand(RESULT_DIR + "fastp/{sample}.html",sample=SAMPLES),
+        #fq1 = expand(RESULT_DIR + "trimmed/{sample}_R1_trimmed.fq.gz",sample = SAMPLES),
+        #fq2 = expand(RESULT_DIR + "trimmed/{sample}_R2_trimmed.fq.gz",sample = SAMPLES)
+        #bam = expand(WORKING_DIR + "mapped/{sample}_sort_index.bam", sample = SAMPLES)
+    message:
+        "Job done! Removing temporary directory"
+
+#rule bwamem2_index:
+#    #conda:
+#    #    "./Tobsoft.yaml"
+#    input:
+#        refgenome = REF_dir + genome + ".fasta",
+#        refpath= REF_dir + genome
+#    output:
+#        REF_dir + genome + ".bwt.2bit.64",
+#        #REF_dir + genome + ".ann",
+#        #REF_dir + genome + ".bwt",
+#        #REF_dir + genome + ".pac",
+#        #REF_dir + genome + ".sa"
+#    log:
+#        "logs/bwa_index/" + genome + ".log"
+#    params:
+#        bwamem2 = config["bwamem2"]
+#
+#    shell:
+#        '''
+#        {params.bwamem2}  index -p {input.refpath}  {input.refgenome} 
+#        '''
+rule fastp:
+    priority: 1
+    input:
+        fw = WORKING_DIR + "/" + "{sample}/" + "{sample}_1.fq.gz",
+        rev= WORKING_DIR + "/" + "{sample}/" + "{sample}_2.fq.gz"
+    output:
+        fq1  = RESULT_DIR + "trimmed/{sample}_R1_trimmed.fq.gz",
+        fq2  = RESULT_DIR + "trimmed/{sample}_R2_trimmed.fq.gz",
+        html = RESULT_DIR + "fastp/{sample}.html"
+    message:"trimming {wildcards.sample} reads to {output.fq1}"
+    threads: config["threads"]
+    log:
+        WORKING_DIR + "logs/fastp/{sample}.log.txt"
+    params:
+        qualified_quality_phred = config["fastp"]["qualified_quality_phred"]
+    shell:
+        "set +o pipefail; \
+        fastp --thread {threads}  --html {output.html} \
+        --qualified_quality_phred {params.qualified_quality_phred} \
+        --in1 {input.fw} --in2 {input.rev} --out1 {output.fq1} --out2 {output.fq2} \
+        > {log} 2>&1"
+
+rule bwa2mem_map:
+    priority: 2
+    input:
+        ref = REF_dir + genome + ".fa",
+        fq1  = RESULT_DIR + "trimmed/{sample}_R1_trimmed.fq.gz",
+        fq2  = RESULT_DIR + "trimmed/{sample}_R2_trimmed.fq.gz"
+    params:
+        threads = config["threads"],
+        ref = REF_dir + genome+".fa",
+        bwamem2 = config["bwamem2"]
+    output:
+        #sort_index_bam = WORKING_DIR + "mapped/{sample}_sort_index.bam",
+        sort_bam = RESULT_DIR + "mapped/{sample}_sort_index.bam"
+    shell:
+        "{params.bwamem2}  mem -t {params.threads} {params.ref} {input.fq1} {input.fq2} | \
+        samtools sort -O BAM -@ {params.threads}  -o {output.sort_bam} "
+        " && samtools index -@ {params.threads} {output.sort_bam}"
+#rule bwa_map:
+#    input:
+#        ref = REF_dir + genome + ".fa",
+#        fq1  = WORKING_DIR + "trimmed/{sample}_R1_trimmed.fq.gz",
+#        fq2  = WORKING_DIR + "trimmed/{sample}_R2_trimmed.fq.gz"
+#    params:
+#        threads = config["threads"],
+#        ref = REF_dir + genome + ".fa"
+#        #bwamem2 = config["bwamem2"]
+#    output:
+#        #sort_index_bam = WORKING_DIR + "mapped/{sample}_sort_index.bam",
+#        sort_bam = temp(RESULT_DIR + "mapped/{sample}_sort_index.bam")
+#    shell:
+#        "bwa  mem -t {params.threads} {params.ref} {input.fq1} {input.fq2} | \
+#        samtools sort -O BAM -@ {params.threads}  -o {output.sort_bam} "
+#        " && samtools index -@ {params.threads} {output.sort_bam}"
+rule addReadGroup:
+    priority: 3
+    input:
+        picard = config["picard"],
+        sort_index_bam = RESULT_DIR + "mapped/{sample}_sort_index.bam"
+    output:
+        sort_index_rgbam = RESULT_DIR + "mapped/{sample}_sort_index_rg.bam"
+    params:
+        sample = "{sample}"
+    shell:
+        "java -Xmx80G -jar {input.picard} AddOrReplaceReadGroups \
+        I={input.sort_index_bam}  O={output.sort_index_rgbam} RGID={params.sample} RGLB=lib1 RGPL=ILLUMINA RGPU=unit1 RGSM={params.sample}"
+#        
+#rule samtools_stat:
+#    input:
+#        bam = RESULT_DIR + "mapped/{sample}_sort_index_rg.bam"
+#    output:
+#        samstats = RESULT_DIR + "bamstats/{sample}.bamstats.stat"
+#    params:
+#        threads= config["threads"]
+#    shell:
+#        "samtools stats -@ {params.threads} {input.bam} > {output.samstats}"
+#        
+rule picard_remove_duplicates:
+    priority: 4
+    input:
+        picard = config["picard"],
+        bam = RESULT_DIR + "mapped/{sample}_sort_index_rg.bam"
+    output:
+        outbam = RESULT_DIR + "mapped/{sample}_sort_index_rg_nodup.bam",
+        metrics = RESULT_DIR + "dupstats/{sample}.picard.marked_dup_metrics.txt",
+        outbai = RESULT_DIR + "mapped/{sample}_sort_index_rg_nodup.bai"
+    shell:
+        "java -Xmx80G -jar {input.picard}  MarkDuplicates -I {input.bam} -O {output.outbam} -M {output.metrics} --REMOVE_DUPLICATES true --CREATE_INDEX true"
+        
+rule fix_idx:
+    priority: 5
+    input:
+        outbai = RESULT_DIR + "mapped/{sample}_sort_index_rg_nodup.bai"
+
+    output:
+        outbai = RESULT_DIR + "mapped/{sample}_sort_index_rg_nodup.bam.bai"
+    shell:
+        "mv {input.outbai} {output.outbai}"
+        
+rule get_gvcf:
+    priority:6
+    input:
+        bam = RESULT_DIR + "mapped/{sample}_sort_index_rg_nodup.bam"
+    params:
+        ref = REF_dir + genome+".fa"
+    output:
+        outgvcf = protected(RESULT_DIR + "gvcf/{sample}.gvcf.gz")
+    shell:
+        "java -Xmx80G -jar /data/home/yanjun/project/bin/gatk-4.5.0.0/gatk-package-4.5.0.0-local.jar HaplotypeCaller -I {input.bam} -O {output.outgvcf} -R {params.ref} -ERC GVCF" 
+#        
+#
+#rule generateBAMList:
+#    params:
+#        bam = RESULT_DIR + "mapped/",
+#        suff= "_sort_index_rg_nodup.bam"
+#    output:
+#        bamlist= RESULT_DIR + "mapped/BAMList.txt"
+#    #shell:
+#        #"ls {params.bam} | grep {params.suff} > {output.bamlist}"
+#        #" && for i in `cat {output.bamlist}`; do echo {params.bam}"$i"; done"
+#    run:
+#        import os
+#        import re
+#        F = [f for f in os.listdir(params.bam) if re.search(params.suff,f)]
+#        out = open(output[0],"w")
+#        for f in F:
+#            print(params.bam+f,file=out)
+#        out.close()
+#        
+#rule samtools_faidx:
+#    output:
+#        reffai = REF_dir + genome + ".fasta.fai"
+#    input:
+#        ref = REF_dir + genome + ".fasta"
+#    shell:
+#        "samtools faidx {input.ref}"
+##        
+##rule freeb:
+##    input:
+##        bamlist= WORKING_DIR + "mapped/BAMList.txt",
+##        ref = REF_dir + genome + ".fasta"
+##    output:
+##        vcf = WORKING_DIR + "vcf/all.vcf"
+##    shell:
+##        "freebayes -f {input.ref} -L {input.bamlist} > {output.vcf}"
+##        
+#rule freeb_pa:
+#    input:
+#        bamlist= RESULT_DIR + "mapped/BAMList.txt",
+#        ref = REF_dir + genome + ".fasta",
+#        fai = REF_dir + genome + ".fasta.fai"
+#    output:
+#        vcf = RESULT_DIR + "vcf/all.vcf"
+#    params:
+#        threads=4
+#    shell:
+#        "freebayes-parallel <(fasta_generate_regions.py {input.fai} 100000) {params.threads} -f {input.ref}\
+#        -L {input.bamlist} --use-best-n-alleles 2 --min-mapping-quality 10 --limit-coverage 10 > {output.vcf}"
+
+

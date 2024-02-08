@@ -1,0 +1,84 @@
+configfile: "/data/home/yanjun/project/bin/STzy300-RNA.yaml"
+
+import pandas as pd
+
+SAMPLES = [ f.strip("\n") for f in open("/data/home/yanjun/project/tobacco/rev/RNA_poly/00.CleanData/STzy3000.txt").readlines() ]
+
+
+WORKING_DIR = config['working_dir']
+RESULT_DIR = config["result_dir"]
+REF_dir = config["refdir"]
+genome = config["ref"]
+
+
+rule all:
+    input:    
+        #fq1 = expand(WORKING_DIR + "fastq/{sample}_1.fastq.gz",sample = SAMPLES),
+        #fq2 = expand(WORKING_DIR + "fastq/{sample}_2.fastq.gz",sample = SAMPLES),
+        #bam = expand(RESULT_DIR + "mapped/{sample}.bam",sample = SAMPLES),
+        #txt = expand(RESULT_DIR + "Expression/{sample}.txt",sample = SAMPLES),
+        tsv = expand(RESULT_DIR + "tsv/{sample}.tsv",sample = SAMPLES)
+    message:
+        "Job done! Removing temporary directory"
+
+rule fastp:
+    input:
+        fw = WORKING_DIR + "{sample}/" + "{sample}_1.clean.fq.gz",
+        rev= WORKING_DIR  + "{sample}/" + "{sample}_2.clean.fq.gz"
+    output:
+        fq1  = RESULT_DIR + "trimmed/{sample}_R1_trimmed.fq.gz",
+        fq2  = RESULT_DIR + "trimmed/{sample}_R2_trimmed.fq.gz",
+        html = RESULT_DIR + "fastp/{sample}.html"
+    message:"trimming {wildcards.sample} reads to {output.fq1}"
+    threads: config["threads"]
+    log:
+        WORKING_DIR + "logs/fastp/{sample}.log.txt"
+    params:
+        qualified_quality_phred = config["fastp"]["qualified_quality_phred"]
+    shell:
+        "fastp --thread {threads}  --html {output.html} \
+        --qualified_quality_phred {params.qualified_quality_phred} \
+        --in1 {input.fw} --in2 {input.rev} --out1 {output.fq1} --out2 {output.fq2} \
+        > {log} 2>&1"
+
+rule hisat_mapping:
+    input:
+        fq1  = RESULT_DIR + "trimmed/{sample}_R1_trimmed.fq.gz",
+        fq2  = RESULT_DIR + "trimmed/{sample}_R2_trimmed.fq.gz"
+    output:
+        bams  = RESULT_DIR + "mapped/{sample}.bam",
+        met   = RESULT_DIR + "logs/{sample}_met.txt"
+    params:
+        indexName = REF_dir + genome,
+        threads = config["threads"]
+    message:
+        "mapping reads to genome to bam files."
+    log:
+        WORKING_DIR + "logs/hisat/{sample}.log.txt"
+    shell:
+        "hisat2 -p {threads} --met-file {output.met} -x {params.indexName} \
+            -1 {input.fq1} -2 {input.fq2} | samtools sort -O BAM -@ {threads}  -o {output.bams} "
+            "&& samtools index -@ {params.threads} {output.bams}"
+
+rule strigtie:
+    input:
+        GFF =  config["gff"],
+        bams  = RESULT_DIR + "mapped/{sample}.bam"
+    output:
+        gif =  RESULT_DIR + "gif/{sample}.gif",
+        tsv =  RESULT_DIR + "tsv/{sample}.tsv"
+    shell:
+        "stringtie -p 5 -e -B -G {input.GFF} \
+        -o {output.gif} \
+        -A {output.tsv} {input.bams}"
+
+#rule featurecount:
+#    input:
+#        GFF =  config["gff"],
+#        bams  = RESULT_DIR + "mapped/{sample}.bam"
+#    output:
+#        txt= RESULT_DIR + "Expression/{sample}.txt"
+#
+#    shell:
+#        "featureCounts -T 10 -p -t exon -g transcript_id -a {input.GFF} \
+#        -o  {output.txt} {input.bams} "

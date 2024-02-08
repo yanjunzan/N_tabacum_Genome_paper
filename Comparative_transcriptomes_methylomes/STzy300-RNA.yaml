@@ -1,0 +1,19 @@
+working_dir:
+    /data/home/yanjun/project/tobacco/rev/RNA_poly/00.CleanData/
+result_dir:
+    /data/home/yanjun/project/tobacco/rev/RNA_poly/
+gff:
+    /data/home/yanjun/project/tobacco/data/genome/ZY300.gff3
+ref:
+    ZY300
+refdir:
+    /data/home/yanjun/project/tobacco/data/genome/
+fastp:
+    qualified_quality_phred: "15"
+picard:
+    /data/home/yanjun/Documents/soft/picard.jar
+bwamem2:
+    /data/home/yanjun/Documents/soft/bwa-mem2-2.0pre2_x64-linux/bwa-mem2
+threads:
+    5
+    
